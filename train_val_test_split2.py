@@ -16,6 +16,11 @@ test_path = '/content/images/test'
 jpg_images = list(Path(image_path).glob('*.jpg'))
 jpgs_annotations = [Path(image_path) / Path(str(f).replace('.jpg','.xml')) for f in jpg_images]
 
+
+
+print("JPG images found:", len(jpg_images))
+
+
 # Determine split proportions
 total_files = len(jpg_images) 
 train_split = 0.8
@@ -25,6 +30,11 @@ test_split = 0.1
 num_train = int(total_files * train_split)
 num_val = int(total_files * val_split)
 num_test = total_files - num_train - num_val
+
+print("Total images:", total_files)
+print("Training images:", num_train) 
+print("Validation images:", num_val)
+print("Test images:", num_test)
 
 # Shuffle file lists
 shuffled_images = random.sample(jpg_images, len(jpg_images))
