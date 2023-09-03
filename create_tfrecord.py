@@ -1,120 +1,105 @@
-# Script to create TFRecord files from train and test dataset folders
-# Originally from GitHub user datitran: https://github.com/datitran/raccoon_dataset/blob/master/generate_tfrecord.py
-
-"""
-Usage:
-  # From tensorflow/models/
-  # Create train data:
-  python generate_tfrecord.py --csv_input=images/train_labels.csv --image_dir=images/train --output_path=train.record
-
-  # Create test data:
-  python generate_tfrecord.py --csv_input=images/test_labels.csv  --image_dir=images/test --output_path=test.record
-"""
-from __future__ import division
-from __future__ import print_function
-from __future__ import absolute_import
-
 import os
-import io
+import glob
 import pandas as pd
+import xml.etree.etree as ET
+import tensorflow as tf
+from object_detection.utils import dataset_util 
 
-from tensorflow.python.framework.versions import VERSION
-if VERSION >= "2.0.0a0":
-    import tensorflow.compat.v1 as tf
-else:
-    import tensorflow as tf
+train_path = '/content/drive/MyDrive/squirrels/train'
+test_path = '/content/drive/MyDrive/squirrels/test'
 
-from PIL import Image
-from object_detection.utils import dataset_util
-from collections import namedtuple, OrderedDict
+label_map = {1: 'Squirrel'} 
 
-flags = tf.app.flags
-flags.DEFINE_string('csv_input', 'train_labels.csv', 'Path to the CSV input')
-flags.DEFINE_string('labelmap', '', 'Path to the labelmap file')
-flags.DEFINE_string('image_dir', '/content/drive/MyDrive/squirrels/train', 'Path to image dir')
-flags.DEFINE_string('output_path', 'train.record', 'Path to output TFRecord')
-FLAGS = flags.FLAGS
-
-def split(df, group):
-    data = namedtuple('data', ['filename', 'object'])
-    gb = df.groupby(group)
-    return [data(filename, gb.get_group(x)) for filename, x in zip(gb.groups.keys(), gb.groups)]
-
+def xml_to_csv(path):
+  xml_list = []
+  for xml_file in glob.glob(path + '/*.xml'):
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+    for member in root.findall('object'):
+      value = (root.find('filename').text,  
+               int(root.find('size')[0].text),
+               int(root.find('size')[1].text),
+               label_map[int(member[0].text)],
+               int(member[4][0].text),
+               int(member[4][1].text),
+               int(member[4][2].text),
+               int(member[4][3].text)
+              )
+      xml_list.append(value)
+  column_name = ['filename', 'width', 'height', 'class', 'xmin', 'ymin', 'xmax', 'ymax']
+  xml_df = pd.DataFrame(xml_list, columns=column_name)
+  return xml_df
 
 def create_tf_example(group, path):
-    with tf.gfile.GFile(os.path.join(path, '{}'.format(group.filename)), 'rb') as fid:
-        encoded_jpg = fid.read()
-    encoded_jpg_io = io.BytesIO(encoded_jpg)
-    image = Image.open(encoded_jpg_io)
-    width, height = image.size
+  with tf.gfile.GFile(os.path.join(path, '{}'.format(group.filename)), 'rb') as fid:
+    encoded_jpg = fid.read()
+  encoded_jpg_io = io.BytesIO(encoded_jpg)
+  image = Image.open(encoded_jpg_io)
 
-    filename = group.filename.encode('utf8')
-    image_format = b'jpg'
-    xmins = []
-    xmaxs = []
-    ymins = []
-    ymaxs = []
-    classes_text = []
-    classes = []
+  width, height = image.size
 
-    labels = []
-    with open(FLAGS.labelmap, 'r') as f:
-        labels = [line.strip() for line in f.readlines()]
+  filename = group.filename.encode('utf8')
+  image_format = b'jpg'
+  xmins = []
+  xmaxs = []
+  ymins = []
+  ymaxs = []
+  classes_text = []
+  classes = []
 
-    for index, row in group.object.iterrows():
-        xmins.append(row['xmin'] / width)
-        xmaxs.append(row['xmax'] / width)
-        ymins.append(row['ymin'] / height)
-        ymaxs.append(row['ymax'] / height)
-        classes_text.append(row['class'].encode('utf8'))
-        classes.append(int(labels.index(row['class'])+1))
+  for index, row in group.object.iterrows():
+    xmins.append(row['xmin'] / width)
+    xmaxs.append(row['xmax'] / width)
+    ymins.append(row['ymin'] / height)
+    ymaxs.append(row['ymax'] / height)
+    classes_text.append(row['class'].encode('utf8'))
+    classes.append(class_text_to_int(row['class']))
+  
+  tf_example = tf.train.Example(features=tf.train.Features(feature={
+    'image/height': dataset_util.int64_feature(height),
+    'image/width': dataset_util.int64_feature(width),
+    'image/filename': dataset_util.bytes_feature(filename),
+    'image/source_id': dataset_util.bytes_feature(filename),
+    'image/encoded': dataset_util.bytes_feature(encoded_jpg),
+    'image/format': dataset_util.bytes_feature(image_format),
+    'image/object/bbox/xmin': dataset_util.float_list_feature(xmins),
+    'image/object/bbox/xmax': dataset_util.float_list_feature(xmaxs),
+    'image/object/bbox/ymin': dataset_util.float_list_feature(ymins),
+    'image/object/bbox/ymax': dataset_util.float_list_feature(ymaxs),
+    'image/object/class/text': dataset_util.bytes_list_feature(classes_text),
+    'image/object/class/label': dataset_util.int64_list_feature(classes),
+  }))
+  return tf_example
 
-    tf_example = tf.train.Example(features=tf.train.Features(feature={
-        'image/height': dataset_util.int64_feature(height),
-        'image/width': dataset_util.int64_feature(width),
-        'image/filename': dataset_util.bytes_feature(filename),
-        'image/source_id': dataset_util.bytes_feature(filename),
-        'image/encoded': dataset_util.bytes_feature(encoded_jpg),
-        'image/format': dataset_util.bytes_feature(image_format),
-        'image/object/bbox/xmin': dataset_util.float_list_feature(xmins),
-        'image/object/bbox/xmax': dataset_util.float_list_feature(xmaxs),
-        'image/object/bbox/ymin': dataset_util.float_list_feature(ymins),
-        'image/object/bbox/ymax': dataset_util.float_list_feature(ymaxs),
-        'image/object/class/text': dataset_util.bytes_list_feature(classes_text),
-        'image/object/class/label': dataset_util.int64_list_feature(classes),
-    }))
-    return tf_example
+def class_text_to_int(row_label):
+  return list(label_map.keys())[list(label_map.values()).index(row_label)]  
 
+def split(df, group):
+  data = namedtuple('data', ['filename', 'object'])
+  gb = df.groupby(group)
+  return [data(filename, gb.get_group(x)) for filename, x in zip(gb.groups.keys(), gb.groups)]
 
-def main(_):
-    # Load and prepare data
-    writer = tf.python_io.TFRecordWriter(FLAGS.output_path)
-    path = os.path.join(os.getcwd(), FLAGS.image_dir)
-    examples = pd.read_csv(FLAGS.csv_input)
+def main():
+  train_xml_df = xml_to_csv(train_path) 
+  test_xml_df = xml_to_csv(test_path)
 
-    # Create TFRecord files
-    grouped = split(examples, 'filename')
-    for group in grouped:
-        tf_example = create_tf_example(group, path)
-        writer.write(tf_example.SerializeToString())
+  # Create TFRecord files
+  train_writer = tf.python_io.TFRecordWriter('train.record')
+  test_writer = tf.python_io.TFRecordWriter('test.record')
 
-    writer.close()
-    output_path = os.path.join(os.getcwd(), FLAGS.output_path)
-    print('Successfully created the TFRecords: {}'.format(output_path))
+  train_grouped = split(train_xml_df, 'filename')
+  for group in train_grouped:
+    tf_example = create_tf_example(group, train_path)
+    train_writer.write(tf_example.SerializeToString())
 
-    # Create labelmap.pbtxt file
-    path_to_labeltxt = os.path.join(os.getcwd(), FLAGS.labelmap)
-    with open(path_to_labeltxt, 'r') as f:
-        labels = [line.strip() for line in f.readlines()]
-    
-    path_to_labelpbtxt = os.path.join(os.getcwd(), 'labelmap.pbtxt')
-    with open(path_to_labelpbtxt,'w') as f:
-        for i, label in enumerate(labels):
-            f.write('item {\n' +
-                    '  id: %d\n' % (i + 1) +
-                    '  name: \'%s\'\n' % label +
-                    '}\n' +
-                    '\n')
+  test_grouped = split(test_xml_df, 'filename')
+  for group in test_grouped: 
+    tf_example = create_tf_example(group, test_path)
+    test_writer.write(tf_example.SerializeToString())
 
-if __name__ == '__main__':
-    tf.app.run()
+  train_writer.close()
+  test_writer.close()
+
+  print('Successfully created TFRecord files.')
+  
+main()
