@@ -1,5 +1,5 @@
 ### Python script to split a labeled image dataset into Train, Validation, and Test folders.
-# Author: Evan Juras, EJ Technology Consultants
+# Author: Evan Juras, EJ Technology Consultants (Modified by Oliver Libaw Sept 2023)
 # Date: 4/10/21
 
 # Randomly splits images to 80% train, 10% validation, and 10% test, and moves them to their respective folders. 
